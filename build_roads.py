@@ -30,12 +30,19 @@ sys.path.insert(0, HERE)
 import safer_route as sr  # noqa: E402
 
 TORONTO_BBOX = (43.581, -79.639, 43.856, -79.115)  # south, west, north, east
+# Public Overpass servers, tried in turn when one is busy or down.
+OVERPASS_SERVERS = [
+    "https://overpass-api.de/api/interpreter",
+    "https://overpass.kumi.systems/api/interpreter",
+    "https://overpass.private.coffee/api/interpreter",
+    "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
+]
 
 
-def overpass_tile(s, w, n, e, retries=4):
+def overpass_tile(s, w, n, e, retries=8):
     if sr.requests is None:
         sys.exit("Run `pip install requests` first (or pass --osm-file).")
-    q = f"""[out:json][timeout:300];
+    q = f"""[out:json][timeout:180];
 (
   way["highway"~"^({sr.DRIVABLE})$"]["access"!~"private|no"]({s},{w},{n},{e});
   node["highway"="traffic_signals"]({s},{w},{n},{e});
@@ -43,34 +50,50 @@ def overpass_tile(s, w, n, e, retries=4):
 (._;>;);
 out body;"""
     for attempt in range(retries):
+        url = OVERPASS_SERVERS[attempt % len(OVERPASS_SERVERS)]
+        host = url.split("/")[2]
         try:
-            r = sr.requests.post(sr.OVERPASS_URL, data={"data": q}, timeout=360,
-                                 headers={"User-Agent": "safer-turns-builder/0.1"})
-            if r.status_code in (429, 504):
-                raise RuntimeError(f"Overpass busy ({r.status_code})")
-            r.raise_for_status()
-            return r.json()["elements"]
-        except Exception as ex:  # network hiccup or rate limit: wait and retry
-            wait = 30 * (attempt + 1)
-            print(f"  tile failed ({ex}); retrying in {wait}s", file=sys.stderr)
+            r = sr.requests.post(url, data={"data": q}, timeout=240,
+                                 headers={"User-Agent": "safer-turns-builder/0.2"})
+            if r.status_code != 200:
+                raise RuntimeError(f"HTTP {r.status_code}")
+            data = r.json()
+            if "remark" in data and not data.get("elements"):
+                raise RuntimeError(data["remark"][:80])
+            return data["elements"]
+        except Exception as ex:  # busy, timed out or down: try the next server
+            wait = 10 if attempt < len(OVERPASS_SERVERS) else 60
+            print(f"  {host} failed ({ex}); trying again in {wait}s", file=sys.stderr)
             time.sleep(wait)
-    sys.exit("Overpass kept failing. Try again later, or use --osm-file.")
+    sys.exit("Every Overpass server kept failing. Wait a while and run it again; finished tiles are kept.")
 
 
-def download(bbox, splits=3):
+CACHE = os.path.join(HERE, "osm_tiles")
+
+
+def download(bbox, splits=6):
     s, w, n, e = bbox
+    os.makedirs(CACHE, exist_ok=True)
     seen, out = set(), []
     dl, dw = (n - s) / splits, (e - w) / splits
     for i in range(splits):
         for j in range(splits):
             t = (s + i * dl, w + j * dw, s + (i + 1) * dl, w + (j + 1) * dw)
-            print(f"Downloading tile {i * splits + j + 1}/{splits * splits} ...", file=sys.stderr)
-            for el in overpass_tile(*t):
+            cache = os.path.join(CACHE, f"tile_{splits}_{i}_{j}_{'_'.join(f'{x:.3f}' for x in t)}.json")
+            if os.path.exists(cache):
+                with open(cache, encoding="utf-8") as f:
+                    els = json.load(f)
+            else:
+                print(f"Downloading tile {i * splits + j + 1}/{splits * splits} ...", file=sys.stderr)
+                els = overpass_tile(*t)
+                with open(cache, "w", encoding="utf-8") as f:
+                    json.dump(els, f)
+                time.sleep(2)  # be polite to the public server
+            for el in els:
                 k = (el["type"], el["id"])
                 if k not in seen:
                     seen.add(k)
                     out.append(el)
-            time.sleep(2)  # be polite to the public server
     return {"elements": out}
 
 
@@ -157,6 +180,7 @@ def main():
     ap.add_argument("--bbox", help="south,west,north,east (default: City of Toronto)")
     ap.add_argument("--out", default=os.path.join(HERE, "web", "roads", "toronto.json"))
     ap.add_argument("--area-name", default="Toronto")
+    ap.add_argument("--splits", type=int, default=6, help="download in N x N tiles (more = smaller requests)")
     args = ap.parse_args()
 
     if args.osm_file:
@@ -164,7 +188,7 @@ def main():
             osm = json.load(f)
     else:
         bbox = tuple(map(float, args.bbox.split(","))) if args.bbox else TORONTO_BBOX
-        osm = download(bbox)
+        osm = download(bbox, args.splits)
         if args.save_osm:
             with open(args.save_osm, "w", encoding="utf-8") as f:
                 json.dump(osm, f)
