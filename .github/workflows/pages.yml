@@ -1,0 +1,23 @@
+# For later, once the code is on GitHub: rebuild the Toronto road file every Monday
+# and publish the web/ folder to GitHub Pages. Not used until a repository exists.
+name: Build roads and publish
+on:
+  schedule: [{ cron: "0 9 * * 1" }]
+  workflow_dispatch:
+permissions: { contents: read, pages: write, id-token: write }
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install requests && python build_roads.py
+      - uses: actions/upload-pages-artifact@v3
+        with: { path: web }
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: { name: github-pages }
+    steps:
+      - uses: actions/deploy-pages@v4
