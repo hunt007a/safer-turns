@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Safer Turns</title>
+<meta name="description" content="Driving routes in Toronto that turn left at traffic signals instead of across traffic with no signal. Opens in Google Maps.">
+<meta name="theme-color" content="#2b3440">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="vendor/leaflet/leaflet.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="app">
+
+  <!-- PLAN -->
+  <section id="plan" class="screen">
+    <header class="brand">
+      <div class="logo" aria-hidden="true"></div>
+      <div><h1>Safer Turns</h1><p>Turn left at a signal, not across traffic.</p></div>
+    </header>
+    <form id="planForm" class="card form" autocomplete="off">
+      <div class="field">
+        <label for="fromInput">From</label>
+        <div class="inrow">
+          <input id="fromInput" type="text" placeholder="Address, place, or lat,lon" aria-autocomplete="list" aria-controls="fromList">
+          <button type="button" id="locBtn" class="ghost">Use my location</button>
+        </div>
+        <ul class="sugg" id="fromList" role="listbox" hidden></ul>
+      </div>
+      <div class="field">
+        <label for="toInput">To</label>
+        <input id="toInput" type="text" placeholder="Where are you going?" aria-autocomplete="list" aria-controls="toList">
+        <ul class="sugg" id="toList" role="listbox" hidden></ul>
+      </div>
+      <button id="goBtn" class="primary" type="submit" disabled>Loading Toronto roads…</button>
+      <p class="formmsg" id="formMsg" role="status"></p>
+    </form>
+    <div class="card recent" id="recentCard" hidden>
+      <h2>Recent</h2><ul id="recentList"></ul>
+    </div>
+    <p class="foot"><button type="button" class="link" data-open="about">How it works</button> · Toronto only · <span id="dataAge"></span></p>
+  </section>
+
+  <!-- RESULTS -->
+  <section id="results" class="screen" hidden>
+    <header class="top">
+      <button class="back" type="button" id="backBtn" aria-label="Change trip">‹</button>
+      <div class="trip"><span class="dot"></span><span id="rFrom"></span><span class="dot d"></span><span id="rTo"></span></div>
+    </header>
+    <div class="fallback" id="fallback" hidden></div>
+    <section class="verdict" aria-live="polite">
+      <div class="eyebrow" id="eyebrow"></div>
+      <div class="big" id="big"></div>
+      <p id="sub"></p>
+      <div class="bars">
+        <div class="bar"><span>Safer</span><div class="track"><div class="fill safe" id="barSafe"></div></div><span class="t" id="tSafe"></span></div>
+        <div class="bar"><span>Fastest</span><div class="track"><div class="fill fast" id="barFast"></div></div><span class="t" id="tFast"></span></div>
+      </div>
+      <p class="tiny">Times are estimates from speed limits, without traffic. Google Maps will show its own.</p>
+      <button class="link" type="button" data-open="about">Why skip these turns?</button>
+    </section>
+
+    <div class="seg" role="group" aria-label="Route on map">
+      <button type="button" aria-pressed="true" data-r="safer">Safer route</button>
+      <button type="button" aria-pressed="false" data-r="fastest">Fastest route</button>
+    </div>
+    <div id="map" class="map" aria-label="Map of both routes"></div>
+    <div class="legend">
+      <span><i class="lg safe"></i><span id="lgSig">Signal you turn at</span></span>
+      <span><i class="lg risk"></i><span id="lgRisk">Risky turn skipped</span></span>
+      <span id="lgStill" hidden><i class="lg amber"></i>Still on route</span>
+    </div>
+
+    <section class="list">
+      <h3 id="listH"></h3>
+      <div id="pairs"></div>
+      <div id="still"></div>
+      <details id="stepsBox">
+        <summary id="stepsSum"></summary>
+        <ol class="steps" id="steps"></ol>
+      </details>
+    </section>
+
+    <section class="settings">
+      <label for="rights">Also avoid unsignalized rights onto busy roads <input type="checkbox" id="rights"></label>
+      <label for="limit">Most extra time I'll accept
+        <select id="limit"><option value="5">5 min</option><option value="7" selected>7 min</option><option value="10">10 min</option></select></label>
+    </section>
+
+    <div class="cta">
+      <a class="go" id="go" target="_blank" rel="noopener">Open in Google Maps</a>
+      <p class="fine" id="fine"></p>
+    </div>
+  </section>
+
+  <!-- ABOUT -->
+  <div class="sheet" id="about" hidden role="dialog" aria-labelledby="aboutH">
+    <h4 id="aboutH">How Safer Turns works</h4>
+    <p>It finds a route that turns left at <b>traffic signals</b> instead of across oncoming traffic where there is no signal, then hands it to Google Maps with up to 3 stops that keep Google on those turns.</p>
+    <p>In Toronto, from 2006 to 2023, <b>about 1 in 10</b> people killed or seriously injured in a crash were in a <b>left-turning vehicle</b>. About <b>35%</b> of those were at intersections <b>with no traffic signal</b>. The data cannot say how much safer each signalized turn is, so the app only shows which turns you skip and what they cost in time.</p>
+    <p>If the safer route adds more than your limit (7 minutes or 30% by default), you get the fastest route and a list of the turns to watch.</p>
+    <p><b>Privacy.</b> Your route is worked out on your phone. Nothing about your trip is sent to us. The address search service sees what you type, and Google sees the trip when you open it.</p>
+    <p>Signal locations come from OpenStreetMap and can be missing or out of date. You are always the one driving: check the route, and plan before you set off.</p>
+    <p class="tiny" id="attrib">Map data © OpenStreetMap contributors (ODbL).</p>
+    <button type="button" class="primary" data-close>Got it</button>
+  </div>
+  <div class="scrim" id="scrim" hidden></div>
+</div>
+
+<script src="vendor/leaflet/leaflet.js"></script>
+<script src="config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

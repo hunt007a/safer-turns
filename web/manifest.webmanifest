@@ -1,0 +1,10 @@
+{
+  "name": "Safer Turns",
+  "short_name": "Safer Turns",
+  "description": "Toronto driving routes that turn left at signals, opened in Google Maps.",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#eef1f4",
+  "theme_color": "#2b3440",
+  "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml" }]
+}
