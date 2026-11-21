@@ -1,4 +1,4 @@
-// Unit tests for web/router.js. Run: node --test tests/
+// Unit tests for web/router.js. Run: node --test "tests/*.test.js"
 // Uses the sample street grid (tests/sample_roads.json) plus small hand-made graphs.
 const test = require("node:test");
 const assert = require("node:assert/strict");
@@ -281,4 +281,76 @@ test("gmapsUrl: six-decimal coordinates and | between waypoints", () => {
   const u = R.gmapsUrl([43.1, -79.2], [43.3, -79.4], [[43.15, -79.25], [43.2, -79.3]]);
   assert.equal(u, "https://www.google.com/maps/dir/?api=1&origin=43.100000,-79.200000&destination=43.300000,-79.400000&travelmode=driving&waypoints=43.150000,-79.250000%7C43.200000,-79.300000");
   assert.ok(!R.gmapsUrl([1, 2], [3, 4], []).includes("waypoints"));
+});
+
+/* ---------- second pass: edge cases the review found ---------- */
+test("Heap created with no room still grows", () => {
+  const h = new R.Heap(0);
+  h.push(5, 1); h.push(2, 9);
+  assert.equal(h.pop(), 9); assert.equal(h.key, 2);
+  assert.equal(h.pop(), 1); assert.equal(h.key, 5);
+  assert.equal(h.size, 0);
+});
+
+test("nearest: the grid lookup always agrees with scanning every junction", () => {
+  let seed = 3;
+  const rnd = () => ((seed = (Math.imul(seed, 1103515245) + 12345) >>> 0) / 4294967296);
+  const b = g.data.bbox ?? [43.63, -79.43, 43.65, -79.40];
+  for (let i = 0; i < 500; i++) {
+    // mostly near the grid, some far away (beyond the grid's 25 rings) to hit the scan fallback
+    const spread = i % 10 === 0 ? 0.5 : 0.03;
+    const pt = [b[0] + (rnd() - 0.5) * spread + 0.01, b[1] + (rnd() - 0.5) * spread + 0.01];
+    assert.equal(R.nearest(g, pt), R.nearestScan(g, pt), `point ${pt}`);
+  }
+  assert.equal(R.nearest({ ...g, grid: null }, [43.64, -79.42]), R.nearestScan(g, [43.64, -79.42]));
+});
+
+test("A* stays exact on a road file with zero-time edges", () => {
+  // Rounding to 0.1 s gives a few real edges a time of 0. A* must still find the true best route.
+  const nodes = [[43.7, -79.4], [43.70001, -79.4], [43.701, -79.4], [43.7005, -79.401], [43.702, -79.4]];
+  const roads = [
+    [0, 1, 0, 1, 0, true, 0],      // 1 m, rounds to 0 s
+    [1, 2, 8, 110, 0, true, 0],
+    [0, 3, 5, 70, 0, true, 1],
+    [3, 2, 3.3, 70, 0, true, 1],
+    [2, 4, 8, 111, 0, true, 0],
+  ];
+  const gr = R.loadGraph(makeData(nodes, roads, ["A St", "B St"]));
+  const zero = gr.dir.filter((e) => e.len === 1);
+  assert.ok(zero.every((e) => e.time > 0 && e.time < 0.1), "zero-time edges get a tiny positive time");
+  for (const safe of [false, true]) for (let a = 0; a < 5; a++) for (let b = 0; b < 5; b++) {
+    if (a === b) continue;
+    const path = R.search(gr, a, b, R.DEFAULTS, safe);
+    assert.ok(Math.abs(pathCost(gr, path, R.DEFAULTS, safe) - referenceCost(gr, a, b, R.DEFAULTS, safe)) < 1e-9, `${a}->${b}`);
+  }
+});
+
+test("plan: no route between two roads that never meet", () => {
+  const nodes = [[43.7, -79.4], [43.701, -79.4], [43.7, -79.39], [43.701, -79.39]];
+  const gr = R.loadGraph(makeData(nodes, [[0, 1, 10, 111, 0, true, 0], [2, 3, 10, 111, 0, true, 1]], ["A St", "B St"]));
+  assert.equal(R.plan(gr, [43.7, -79.4], [43.7, -79.39], {}).error, "noroute");
+});
+
+test("pinPoint: about 40 m along the road after the turn, following its bends", () => {
+  // the edge after the turn goes 20 m north, then 60 m east: the pin lands 20 m into the east leg
+  const nodes = [[43.7, -79.4], [43.70018, -79.39926]];
+  const data = makeData(nodes, [[0, 1, 10, 80, 0, false, 0]], ["A St"]);
+  data.geom = [Math.round(43.70018 * 1e5), Math.round(-79.4 * 1e5)];
+  data.edges[7] = 0; data.edges[8] = 1;
+  const gr = R.loadGraph(data);
+  const pin = R.pinPoint(gr, { edges: [0] }, { i: 0 });
+  assert.ok(Math.abs(R.haversine([43.70018, -79.4], pin) - 20) < 1.5, `pin ${pin}`);
+  // an edge shorter than 40 m: the pin is its far end
+  const short = R.loadGraph(makeData([[43.7, -79.4], [43.7001, -79.4]], [[0, 1, 2, 11, 0, false, 0]], ["A St"]));
+  assert.deepEqual(R.pinPoint(short, { edges: [0] }, { i: 0 }).map((x) => +x.toFixed(5)), [43.7001, -79.4]);
+});
+
+test("plan: a risky turn the pairing cannot place still shows up in its own pair", () => {
+  // every risky turn on the fastest route must appear in some pair, whatever the route shapes
+  for (let i = 0; i < g.flags.length; i += 3) for (let j = 1; j < g.flags.length; j += 17) {
+    if (i === j || !g.out[i].length || !g.out[j].length) continue;
+    const r = R.plan(g, [g.lat[i], g.lon[i]], [g.lat[j], g.lon[j]], { max_detour_pct: 1e9, max_detour_min: 1e9 });
+    if (r.error || r.decision !== "safer") continue;
+    assert.equal(r.pairs.reduce((n, p) => n + p.avoided.length, 0), r.fastest.risky.length);
+  }
 });

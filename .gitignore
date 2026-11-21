@@ -2,3 +2,5 @@ web/roads/toronto.json
 tests/shots/
 __pycache__/
 osm_tiles/
+web/roads/toronto.json.gz
+tests/sample_roads.json.gz
