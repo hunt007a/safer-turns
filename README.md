@@ -31,7 +31,7 @@ paste your key into `web/config.js`. You can also type coordinates as `43.6629,-
 | --- | --- |
 | `build_roads.py` | Downloads Toronto from OpenStreetMap and writes the compact road file |
 | `safer_route.py` | The original prototype; the builder reuses its road and signal logic |
-| `web/` | The app: `index.html`, `app.js` (screens), `router.js` (routing), `worker.js` |
+| `web/` | The app: `index.html`, `app.js` (wires up the page), `ui.js` (what the screens say), `router.js` (routing), `worker.js` (loads the road file) |
 | `web/vendor/leaflet/` | Map library (BSD-2 licence) |
 | `tests/` | Sample street grid, router test against the prototype, headless browser test |
 | `.github/workflows/pages.yml` | For later: weekly data rebuild and free GitHub Pages hosting |
@@ -39,8 +39,10 @@ paste your key into `web/config.js`. You can also type coordinates as `43.6629,-
 ## Tests
 
 ```
-node --test tests/router.test.js                       # router unit tests
+node --test "tests/*.test.js"                           # router, screen logic and worker unit tests
+node --test --experimental-test-coverage "tests/*.test.js"  # the same, with a coverage table
 python -m unittest discover -s tests -p "test_*.py"     # builder and prototype unit tests
+python tests/py_coverage.py                             # the same, with a coverage table
 node tests/test_router.js     # JS router matches the Python prototype's times
 node tests/test_ui.js         # needs Playwright; checks the screens in light and dark
 node tests/bench_router.js    # routing speed on the real Toronto file (after run.bat)
@@ -52,7 +54,7 @@ or the builder (the app's demo copy in `web/roads/` is the same file):
 ```
 python tests/make_sample_osm.py tests/sample_osm.json
 python build_roads.py --osm-file tests/sample_osm.json --out tests/sample_roads.json --area-name Sample
-copy tests\sample_roads.json weboads\sample.json
+copy tests\sample_roads.json web\roads\sample.json
 ```
 
 Map data (c) OpenStreetMap contributors, ODbL. Signal data can be missing or out of date:

@@ -1,9 +1,9 @@
 // Times the router on the real Toronto road file. Usage: node tests/bench_router.js [roads.json] [trips]
 // Prints load time, per-trip planning time, and a checksum of the results so two versions can be compared.
 const fs = require("fs"), path = require("path");
-const R = require("../web/router.js");
+const R = require(process.env.ROUTER ? path.resolve(process.env.ROUTER) : "../web/router.js");
 const file = process.argv[2] || path.join(__dirname, "..", "web", "roads", "toronto.json");
-const n = +(process.argv[3] || 20);
+const n = Math.max(1, +(process.argv[3] || 20));
 let t0 = performance.now();
 const data = JSON.parse(fs.readFileSync(file, "utf8"));
 const tParse = performance.now() - t0;
@@ -12,9 +12,12 @@ const g = R.loadGraph(data);
 const tLoad = performance.now() - t0;
 // fixed pseudo-random trips inside the data's box, so runs are repeatable
 let seed = 42;
-const rnd = () => ((seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648);
-const [s, w, nn, e] = data.bbox;
-const trips = Array.from({ length: n }, () => [[s + rnd() * (nn - s), w + rnd() * (e - w)], [s + rnd() * (nn - s), w + rnd() * (e - w)]]);
+const rnd = () => ((seed = (Math.imul(seed, 1103515245) + 12345) >>> 0) / 4294967296);
+// trips between random junctions, so every trip is on the road map
+const nodes = [];
+for (let i = 0; i < g.flags.length; i++) if (g.out[i].length) nodes.push(i);
+const at = () => { const i = nodes[Math.floor(rnd() * nodes.length)]; return [g.lat[i], g.lon[i]]; };
+const trips = Array.from({ length: n }, () => [at(), at()]);
 const times = [];
 const sums = [];
 for (const [a, b] of trips) {

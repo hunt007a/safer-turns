@@ -113,17 +113,17 @@ def load_signals_csv(path):
     pts = []
     with open(path, newline="", encoding="utf-8-sig") as f:
         for row in csv.DictReader(f):
-            low = {k.lower(): v for k, v in row.items()}
+            low = {k.lower(): v for k, v in row.items() if k is not None}
             lat = low.get("latitude") or low.get("lat")
             lon = low.get("longitude") or low.get("lon") or low.get("lng")
             if (not lat or not lon) and low.get("geometry"):
                 try:
                     c = json.loads(low["geometry"])["coordinates"]
-                    if c and isinstance(c[0], list):  # MultiPoint: [[lon, lat]]
-                        c = c[0]
-                    lon, lat = c[:2]
+                    for lo, la in (c if c and isinstance(c[0], list) else [c]):  # MultiPoint or Point
+                        pts.append((float(la), float(lo)))
                 except Exception:
-                    continue
+                    pass
+                continue
             try:
                 pts.append((float(lat), float(lon)))
             except (TypeError, ValueError):
@@ -245,8 +245,13 @@ def route(g, src, dst, p, safe=True):
 
 
 def turn_penalty(g, a, b, c, e_in, e_out, p):
+    return turn_info(g, a, b, c, e_in, e_out, p)[0]
+
+
+def turn_info(g, a, b, c, e_in, e_out, p):
+    """(penalty in seconds, risk) where risk is "left", "right" or None."""
     if b in g.signalized or not g.is_junction(b):
-        return 0.0
+        return 0.0, None
     kind, _ = g.classify_turn(a, b, c, e_in, e_out)
     # Busiest *other* road at this junction = traffic you must judge.
     other = [r for r in g.node_roads.get(b, ()) if r[2] != e_in["name"]] or g.node_roads.get(b, [])
@@ -256,11 +261,13 @@ def turn_penalty(g, a, b, c, e_in, e_out, p):
         # Left across oncoming traffic (your road two-way) or into a two-way road.
         crosses = e_in["two_way"] or e_out["two_way"] or any(r[1] for r in other)
         if not crosses:
-            return 0.0
-        return p["left_busy"] if (busy or e_in["rank"] >= 2) else p["left_local"]
+            return 0.0, None
+        if busy or e_in["rank"] >= 2:
+            return p["left_busy"], "left"
+        return p["left_local"], None
     if kind == "right" and busy and e_out["rank"] >= 2 and e_in["rank"] < e_out["rank"]:
-        return p["right_busy"]
-    return 0.0
+        return p["right_busy"], "right"
+    return 0.0, None
 
 
 def describe(g, path, p):
@@ -274,8 +281,8 @@ def describe(g, path, p):
         dist += e["len"]
     for i in range(1, len(path) - 1):
         a, b, c = path[i - 1], path[i], path[i + 1]
-        pen = turn_penalty(g, a, b, c, edges[i - 1], edges[i], p)
-        if pen > 0 and pen in (p["left_busy"], p["right_busy"]):
+        _, risk = turn_info(g, a, b, c, edges[i - 1], edges[i], p)
+        if risk == "left" or (risk == "right" and p["right_busy"] > 0):
             kind, _ = g.classify_turn(a, b, c, edges[i - 1], edges[i])
             risky.append(dict(kind=kind, from_road=edges[i - 1]["name"], to_road=edges[i]["name"],
                               at=g.coord[b]))
@@ -364,6 +371,15 @@ def write_map(path_out, g, fast, safe, out):
         f.write(html)
 
 
+def decision(use_safe, too_far, fastest):
+    """Same order as the app: a fastest route with no risky turns is already safe."""
+    if use_safe:
+        return "safer"
+    if not fastest["risky"]:
+        return "fastest (already safe)"
+    return "fastest (detour too long)" if too_far else "fastest (no better option)"
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--from", dest="src", required=True, help="lat,lon")
@@ -413,7 +429,7 @@ def main():
         fastest=dict(minutes=round(F["time_s"] / 60, 1), km=round(F["dist_m"] / 1000, 2), risky_turns=F["risky"]),
         safer=dict(minutes=round(S["time_s"] / 60, 1), km=round(S["dist_m"] / 1000, 2), risky_turns=S["risky"]),
         extra_minutes=round(extra_s / 60, 1),
-        decision="safer" if use_safe else ("fastest (detour too long)" if too_far else "fastest (already safe or no better option)"),
+        decision=decision(use_safe, too_far, F),
         google_maps_url=url,
     )
     if args.map:

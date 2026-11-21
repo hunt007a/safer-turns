@@ -19,6 +19,7 @@ Map data (c) OpenStreetMap contributors, ODbL.
 """
 import argparse
 import datetime
+import gzip
 import json
 import math
 import os
@@ -224,12 +225,23 @@ def main():
                 attribution="Map data (c) OpenStreetMap contributors, ODbL",
                 stats=dict(nodes=len(data["flags"]), edges=len(data["edges"]) // 9,
                            signalized=sum(1 for f in data["flags"] if f & 1)))
-    os.makedirs(os.path.dirname(args.out), exist_ok=True)
-    with open(args.out, "w", encoding="utf-8") as f:
-        json.dump(data, f, separators=(",", ":"))
+    write_road_file(data, args.out)
     mb = os.path.getsize(args.out) / 1e6
+    gz = os.path.getsize(args.out + ".gz") / 1e6
     print(f"Wrote {args.out}: {data['stats']['nodes']} junctions, {data['stats']['edges']} road links, "
-          f"{data['stats']['signalized']} signalized, {mb:.1f} MB", file=sys.stderr)
+          f"{data['stats']['signalized']} signalized, {mb:.1f} MB ({gz:.1f} MB gzipped)", file=sys.stderr)
+
+
+def write_road_file(data, out):
+    """Write the road file and a gzipped copy next to it. The app loads the gzipped
+    one (about a quarter of the size) and falls back to the plain one."""
+    os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
+    raw = json.dumps(data, separators=(",", ":")).encode("utf-8")
+    with open(out, "wb") as f:
+        f.write(raw)
+    # mtime=0 keeps the gzip bytes the same for the same data
+    with open(out + ".gz", "wb") as f:
+        f.write(gzip.compress(raw, compresslevel=9, mtime=0))
 
 
 if __name__ == "__main__":

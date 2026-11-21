@@ -19,6 +19,7 @@
   const ROAD_WORD = { 6: "a highway", 5: "an expressway", 4: "a major road", 3: "a major road", 2: "a busy road" };
 
   const toRad = (d) => (d * Math.PI) / 180;
+  const M_PER_DEG = 111195; // metres per degree of latitude (mean Earth radius)
   function haversine(a, b) {
     const [la1, lo1] = a.map(toRad), [la2, lo2] = b.map(toRad);
     const d = Math.sin((la2 - la1) / 2) ** 2 + Math.cos(la1) * Math.cos(la2) * Math.sin((lo2 - lo1) / 2) ** 2;
@@ -40,13 +41,27 @@
     // directed edges: forward always, reverse when two-way
     const G = data.geom;
     const dir = [];
-    let vmax = 1; // fastest speed on any edge, m/s: bounds the A* estimate
     const pt = (n) => [lat[n], lon[n]];
     const gp = (k) => [G[2 * k] / 1e5, G[2 * k + 1] / 1e5];
+    // A* bound. The search's estimate is straight-line distance on a flat projection
+    // divided by vmax. For it never to overestimate, vmax must be at least
+    // (straight-line distance between an edge's ends) / (edge time) for every edge,
+    // measured with the widest east-west scale in the file (at its southern edge).
+    let minLat = Infinity;
+    for (let i = 0; i < nN; i++) if (lat[i] < minLat) minLat = lat[i];
+    const KX = M_PER_DEG * Math.cos(toRad(minLat));
+    const flat = (a, b) => Math.hypot((lon[a] - lon[b]) * KX, (lat[a] - lat[b]) * M_PER_DEG);
+    let vmax = 1;
+    for (let i = 0; i < nE; i++) {
+      const o = i * 9, t = E[o + 2] / 10;
+      if (t > 0) vmax = Math.max(vmax, flat(E[o], E[o + 1]) / t);
+    }
     for (let i = 0; i < nE; i++) {
       const o = i * 9;
-      const a = E[o], b = E[o + 1], time = E[o + 2] / 10, len = E[o + 3], gs = E[o + 7], gc = E[o + 8];
-      if (time > 0 && len / time > vmax) vmax = len / time;
+      const a = E[o], b = E[o + 1], len = E[o + 3], gs = E[o + 7], gc = E[o + 8];
+      // the file rounds times to 0.1 s, so a few very short edges read 0 s; give them the
+      // time they take at top speed, which keeps the A* bound valid and changes nothing visible
+      const time = E[o + 2] / 10 || flat(a, b) / vmax;
       // first and last legs of the edge's geometry, in the forward direction
       const first = gc ? gp(gs) : pt(b), last = gc ? gp(gs + gc - 1) : pt(a);
       const common = { time, len, rank: E[o + 4], two_way: !!E[o + 5], name: E[o + 6], gs, gc };
@@ -55,7 +70,25 @@
     }
     const out = Array.from({ length: nN }, () => []);
     dir.forEach((e, k) => out[e.a].push(k));
-    return { data, lat, lon, flags: data.flags, roads: data.roads, names: data.names, dir, out, vmax };
+    const g = { data, lat, lon, flags: data.flags, roads: data.roads, names: data.names, dir, out, vmax };
+    g.grid = buildGrid(g);
+    return g;
+  }
+
+  /* ---------- nearest junction: a grid so start and end snap without scanning every node ---------- */
+  // nearest() measures distance as dLat^2 + (dLon * LON_SCALE)^2, so cells are square in that measure.
+  const LON_SCALE = 0.72, CELL = 0.004; // CELL is in degrees of latitude, about 450 m
+  const cellOf = (la, lo) => [Math.floor(la / CELL), Math.floor((lo * LON_SCALE) / CELL)];
+  function buildGrid(g) {
+    const cells = new Map();
+    for (let i = 0; i < g.flags.length; i++) {
+      if (!g.out[i].length) continue;
+      const [r, c] = cellOf(g.lat[i], g.lon[i]), key = r * 100003 + c;
+      let list = cells.get(key);
+      if (!list) cells.set(key, (list = []));
+      list.push(i);
+    }
+    return cells;
   }
 
   function edgePoints(g, e) {
@@ -66,14 +99,31 @@
     return [[g.lat[e.a], g.lon[e.a]], ...mid, [g.lat[e.b], g.lon[e.b]]];
   }
 
-  function nearest(g, pt) {
+  const sqDist = (g, i, pt) => (g.lat[i] - pt[0]) ** 2 + ((g.lon[i] - pt[1]) * LON_SCALE) ** 2;
+  function nearestScan(g, pt) {
     let best = -1, bd = Infinity;
     for (let i = 0; i < g.flags.length; i++) {
       if (!g.out[i].length) continue;
-      const d = (g.lat[i] - pt[0]) ** 2 + ((g.lon[i] - pt[1]) * 0.72) ** 2;
-      if (d < bd) { bd = d; best = i; }
+      const d = sqDist(g, i, pt);
+      if (d < bd || (d === bd && i < best)) { bd = d; best = i; }
     }
     return best;
+  }
+  // Rings of cells around the point. A node k rings out is at least (k - 1) cells away,
+  // so once the best match is closer than that, no further ring can beat it.
+  function nearest(g, pt) {
+    if (!g.grid) return nearestScan(g, pt);
+    const [r0, c0] = cellOf(pt[0], pt[1]);
+    let best = -1, bd = Infinity;
+    for (let k = 0; k <= 25; k++) {
+      if (best >= 0 && ((k - 1) * CELL) ** 2 > bd) return best;
+      for (let r = r0 - k; r <= r0 + k; r++) for (let c = c0 - k; c <= c0 + k; c++) {
+        if (Math.max(Math.abs(r - r0), Math.abs(c - c0)) !== k) continue;
+        const list = g.grid.get(r * 100003 + c);
+        if (list) for (const i of list) { const d = sqDist(g, i, pt); if (d < bd || (d === bd && i < best)) { bd = d; best = i; } }
+      }
+    }
+    return nearestScan(g, pt); // more than ~11 km from any road: rare, so just scan
   }
 
   /* ---------- turns ---------- */
@@ -135,7 +185,7 @@
     constructor(cap = 1024) { this.k = new Float64Array(cap); this.v = new Int32Array(cap); this.size = 0; this.key = 0; }
     push(c, v) {
       if (this.size === this.k.length) {
-        const k = new Float64Array(this.size * 2), w = new Int32Array(this.size * 2);
+        const cap = Math.max(16, this.size * 2), k = new Float64Array(cap), w = new Int32Array(cap);
         k.set(this.k); w.set(this.v); this.k = k; this.v = w;
       }
       const K = this.k, V = this.v;
@@ -161,22 +211,25 @@
   }
 
   // A* over directed edges: the state is an edge, so a turn between two edges can
-  // carry a cost. The estimate is straight-line distance at the road file's top speed,
-  // cut by 2% so rounding in the file can never make it overestimate.
+  // carry a cost. The estimate is flat straight-line distance to the destination at
+  // the road file's top speed. Its east-west scale (at the destination's latitude) is
+  // never wider than the one loadGraph used for vmax, so by the triangle inequality the
+  // estimate drops by no more than an edge's time across any edge: it never
+  // overestimates, and the first time the destination comes off the heap is the best.
   function search(g, src, dst, p, safe) {
     const nD = g.dir.length;
     const best = new Float64Array(nD).fill(Infinity);
     const par = new Int32Array(nD).fill(-1);
     const h = new Heap();
     const dLat = g.lat[dst], dLon = g.lon[dst];
-    const kx = 111195 * Math.cos(toRad(dLat)), ky = 111195, inv = 0.98 / g.vmax;
-    const est = (n) => { const x = (g.lon[n] - dLon) * kx, y = (g.lat[n] - dLat) * ky; return Math.sqrt(x * x + y * y) * inv; };
+    const kx = M_PER_DEG * Math.cos(toRad(dLat)), inv = (1 - 1e-12) / g.vmax;
+    const est = (n) => Math.hypot((g.lon[n] - dLon) * kx, (g.lat[n] - dLat) * M_PER_DEG) * inv;
     for (const k of g.out[src]) { const e = g.dir[k]; if (e.time < best[k]) { best[k] = e.time; h.push(e.time + est(e.b), k); } }
     let goal = -1;
     while (h.size) {
       const k = h.pop();
       const eIn = g.dir[k], c = best[k];
-      if (h.key > c + est(eIn.b) + 1e-6) continue; // stale entry: a cheaper way in was found
+      if (h.key > c + est(eIn.b) + 1e-9) continue; // stale entry: a cheaper way in was found
       if (eIn.b === dst) { goal = k; break; }
       const outs = g.out[eIn.b];
       for (let j = 0; j < outs.length; j++) {
@@ -263,7 +316,7 @@
       }
       acc += d;
     }
-    return pts[pts.length - 1];
+    // not reached: the loop always returns at the last leg
   }
 
   function gmapsUrl(src, dst, pins) {
@@ -342,7 +395,7 @@
     };
   }
 
-  const api = { DEFAULTS, loadGraph, plan, nearest, haversine, bearing, turnKind, turnInfo, turnPen, search, segments, gmapsUrl, Heap };
+  const api = { DEFAULTS, loadGraph, plan, nearest, nearestScan, haversine, bearing, turnKind, turnInfo, turnPen, search, segments, pinPoint, gmapsUrl, Heap };
   root.SaferRouter = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof self !== "undefined" ? self : globalThis);
