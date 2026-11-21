@@ -9,8 +9,8 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&display=swap">
-<link rel="stylesheet" href="vendor/leaflet/leaflet.css">
-<link rel="stylesheet" href="style.css?v=3">
+<link rel="stylesheet" href="vendor/maplibre/maplibre-gl.css">
+<link rel="stylesheet" href="style.css?v=4">
 </head>
 <body>
 <div class="app">
@@ -67,7 +67,17 @@
       <button type="button" aria-pressed="true" data-r="safer">Safer route</button>
       <button type="button" aria-pressed="false" data-r="fastest">Fastest route</button>
     </div>
-    <div id="map" class="map" aria-label="Map of both routes"></div>
+    <div class="mapwrap" id="mapwrap">
+      <div id="map" class="map" role="region" aria-label="Map of both routes"></div>
+      <button type="button" class="modebtn" id="modeBtn" hidden>2D</button>
+      <div class="pv" id="pv" hidden role="group" aria-label="Turn preview" aria-live="polite">
+        <div class="pvtop"><span class="pvkind" id="pvKind"></span><span class="pvcount" id="pvCount"></span><button type="button" class="pvx" id="pvClose" aria-label="Close preview">×</button></div>
+        <div class="pvtext" id="pvText"></div>
+        <div class="pvnote" id="pvNote"></div>
+        <div class="pvnav"><button type="button" id="pvPrev">Back</button><button type="button" id="pvNext" class="on">Next</button></div>
+      </div>
+    </div>
+    <button type="button" class="previewbtn" id="previewBtn" hidden>Preview each turn</button>
     <div class="legend">
       <span><i class="lg safe"></i><span id="lgSig">Signal you turn at</span></span>
       <span><i class="lg risk"></i><span id="lgRisk">Risky turn skipped</span></span>
@@ -110,10 +120,12 @@
   <div class="scrim" id="scrim" hidden></div>
 </div>
 
-<script src="vendor/leaflet/leaflet.js"></script>
+<script src="vendor/maplibre/maplibre-gl.js"></script>
 <script src="config.js?v=3"></script>
-<script src="ui.js?v=3"></script>
+<script src="ui.js?v=4"></script>
 <!-- bump ?v= when these files change, so browsers drop their cached copy -->
-<script src="app.js?v=3"></script>
+<script src="preview.js?v=4"></script>
+<script src="map.js?v=4"></script>
+<script src="app.js?v=4"></script>
 </body>
 </html>

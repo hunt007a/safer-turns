@@ -107,7 +107,11 @@
 
   /* ---------- turn lists ---------- */
   function turnRow(cls, icon, tag, turns, extraHtml) {
-    return `<div class="row ${cls}"><div class="ic">${icon}</div><div><div class="tag">${tag}</div>${turns.map((t) => `<div class="what">${esc(t.text)}</div>${t.detail ? `<div class="detail">${esc(t.detail)}</div>` : ""}`).join("")}${extraHtml || ""}</div></div>`;
+    // a risky turn gets its short reason as a red label; the longer detail then drops its "No signal." start
+    const one = (t) => `<div class="what">${esc(t.text)}</div>` +
+      (t.reason ? `<div class="why">${esc(t.reason)}</div>` : "") +
+      (t.detail ? `<div class="detail">${esc(t.reason ? t.detail.replace(/^No signal\. /, "") : t.detail)}</div>` : "");
+    return `<div class="row ${cls}"><div class="ic">${icon}</div><div><div class="tag">${tag}</div>${turns.map(one).join("")}${extraHtml || ""}</div></div>`;
   }
 
   // The list under the map for the route on show ("safer" or "fastest"), and the legend.
