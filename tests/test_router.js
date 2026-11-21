@@ -2,6 +2,8 @@
 const fs = require("fs"), path = require("path"), { execFileSync } = require("child_process");
 const R = require("../web/router.js");
 const dir = __dirname;
+// python.org installs on Windows put "python" on PATH, not "python3"
+const PY = process.env.PYTHON || (process.platform === "win32" ? "python" : "python3");
 const g = R.loadGraph(JSON.parse(fs.readFileSync(path.join(dir, "sample_roads.json"))));
 const trips = [
   [[43.64865, -79.42815], [43.63785, -79.40965]],
@@ -15,7 +17,7 @@ const trips = [
 let fails = 0;
 const ok = (c, m) => { if (!c) { fails++; console.log("FAIL", m); } };
 for (const [a, b] of trips) {
-  const py = JSON.parse(execFileSync("python3", [path.join(dir, "..", "safer_route.py"), "--osm-file", path.join(dir, "sample_osm.json"),
+  const py = JSON.parse(execFileSync(PY, [path.join(dir, "..", "safer_route.py"), "--osm-file", path.join(dir, "sample_osm.json"),
     "--from", a.join(","), "--to", b.join(","), "--json"]).toString());
   const js = R.plan(g, a, b, { right_busy: 25 });
   const tag = `${a} -> ${b}`;

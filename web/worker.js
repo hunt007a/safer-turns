@@ -1,5 +1,5 @@
 /* Loads the road file once and answers route requests off the main thread. */
-importScripts("router.js");
+importScripts("router.js?v=2");
 let graph = null;
 const ROADS = new URLSearchParams(self.location.search).get("roads") || "roads/toronto.json";
 const ready = fetch(ROADS)

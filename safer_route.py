@@ -118,9 +118,10 @@ def load_signals_csv(path):
             lon = low.get("longitude") or low.get("lon") or low.get("lng")
             if (not lat or not lon) and low.get("geometry"):
                 try:
-                    lon, lat = json.loads(low["geometry"])["coordinates"][:2]
-                    if isinstance(lon, list):  # MultiPoint
-                        lon, lat = lon
+                    c = json.loads(low["geometry"])["coordinates"]
+                    if c and isinstance(c[0], list):  # MultiPoint: [[lon, lat]]
+                        c = c[0]
+                    lon, lat = c[:2]
                 except Exception:
                     continue
             try:
@@ -274,7 +275,7 @@ def describe(g, path, p):
     for i in range(1, len(path) - 1):
         a, b, c = path[i - 1], path[i], path[i + 1]
         pen = turn_penalty(g, a, b, c, edges[i - 1], edges[i], p)
-        if pen >= p["right_busy"]:
+        if pen > 0 and pen in (p["left_busy"], p["right_busy"]):
             kind, _ = g.classify_turn(a, b, c, edges[i - 1], edges[i])
             risky.append(dict(kind=kind, from_road=edges[i - 1]["name"], to_road=edges[i]["name"],
                               at=g.coord[b]))
@@ -384,12 +385,14 @@ def main():
     dst = tuple(map(float, args.dst.split(",")))
 
     if args.osm_file:
-        osm = json.load(open(args.osm_file))
+        with open(args.osm_file, encoding="utf-8") as f:
+            osm = json.load(f)
     else:
         print("Downloading OSM data from Overpass...", file=sys.stderr)
         osm = fetch_osm(src, dst)
         if args.save_osm:
-            json.dump(osm, open(args.save_osm, "w"))
+            with open(args.save_osm, "w", encoding="utf-8") as f:
+                json.dump(osm, f)
     extra = load_signals_csv(args.signals_csv) if args.signals_csv else []
     g = Graph(osm, extra, p["signal_radius_m"])
     s, d = g.nearest(src), g.nearest(dst)

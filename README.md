@@ -39,10 +39,20 @@ paste your key into `web/config.js`. You can also type coordinates as `43.6629,-
 ## Tests
 
 ```
-python tests/make_sample_osm.py tests/sample_osm.json
-python build_roads.py --osm-file tests/sample_osm.json --out tests/sample_roads.json
+node --test tests/router.test.js                       # router unit tests
+python -m unittest discover -s tests -p "test_*.py"     # builder and prototype unit tests
 node tests/test_router.js     # JS router matches the Python prototype's times
 node tests/test_ui.js         # needs Playwright; checks the screens in light and dark
+node tests/bench_router.js    # routing speed on the real Toronto file (after run.bat)
+```
+
+The sample street grid is checked in. To rebuild it after changing `make_sample_osm.py`
+or the builder (the app's demo copy in `web/roads/` is the same file):
+
+```
+python tests/make_sample_osm.py tests/sample_osm.json
+python build_roads.py --osm-file tests/sample_osm.json --out tests/sample_roads.json --area-name Sample
+copy tests\sample_roads.json weboads\sample.json
 ```
 
 Map data (c) OpenStreetMap contributors, ODbL. Signal data can be missing or out of date:

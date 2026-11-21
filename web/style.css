@@ -103,6 +103,7 @@ details summary{cursor:pointer;font-weight:600;font-size:14px;padding:6px 0}
 .settings label{display:flex;justify-content:space-between;align-items:center;gap:12px}
 .settings select{font:inherit;padding:4px 6px;border-radius:6px;border:1px solid var(--line);background:var(--surface);color:var(--ink)}
 .cta{position:sticky;bottom:0;z-index:500;background:var(--surface);border-top:1px solid var(--line);padding:12px 18px calc(14px + env(safe-area-inset-bottom,0px))}
+.go[aria-disabled="true"]{opacity:.45;pointer-events:none}
 .go{display:block;text-align:center;background:var(--safe);color:#fff;text-decoration:none;font:700 18px var(--display);letter-spacing:.02em;padding:14px;border-radius:12px}
 .fine{font-size:12px;color:var(--muted);margin:8px 0 0;text-align:center}
 .busy{opacity:.5;pointer-events:none}
