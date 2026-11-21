@@ -19,6 +19,10 @@ let fails = 0; const ok = (c, m) => { console.log((c ? "ok   " : "FAIL ") + m); 
     const pg = await ctx.newPage();
     const errs = []; pg.on("pageerror", (e) => errs.push(e.message)); pg.on("console", (m) => m.type() === "error" && !/tile|fonts|Failed to load resource/.test(m.text()) && errs.push(m.text()));
     await pg.route(/fonts\.(googleapis|gstatic)|tile\.openstreetmap/, (r) => r.abort());
+    // the 3D map's tiles: a blank style, so the test needs no network and the route layers still draw
+    await pg.route(/tiles\.openfreemap\.org/, (r) => /\/styles\//.test(r.request().url())
+      ? r.fulfill({ contentType: "application/json", body: JSON.stringify({ version: 8, sources: {}, layers: [{ id: "bg", type: "background", paint: { "background-color": "#ddd" } }] }) })
+      : r.abort());
     // fake address search so the test needs no network
     await pg.route(/photon\.komoot\.io/, (r) => {
       const q = new URL(r.request().url()).searchParams.get("q");
@@ -46,6 +50,19 @@ let fails = 0; const ok = (c, m) => { console.log((c ? "ok   " : "FAIL ") + m); 
     const href = await pg.getAttribute("#go", "href");
     ok(href.startsWith("https://www.google.com/maps/dir/?api=1") && href.includes("waypoints="), `[${scheme}] Google Maps link has waypoints`);
     await pg.screenshot({ path: path.join(shots, `2-results-${scheme}.png`), fullPage: true });
+    ok(await pg.$$eval("#pairs .why", (x) => x.length && x.every((e) => /^No signal, /.test(e.textContent))), `[${scheme}] skipped turns show a short reason`);
+    // step-by-step preview
+    await pg.click("#previewBtn");
+    await pg.waitForSelector("#pv:not([hidden])");
+    ok(/^Turn 1 of \d+$/.test(await pg.textContent("#pvCount")), `[${scheme}] preview starts at turn 1`);
+    const nStops = await pg.evaluate(() => SaferTurnsDebug.preview.stops.length);
+    const kinds = await pg.evaluate(() => SaferTurnsDebug.preview.stops.map((s) => s.kind));
+    ok(kinds.includes("skipped"), `[${scheme}] preview includes the skipped turn`);
+    for (let i = 1; i < nStops; i++) await pg.click("#pvNext");
+    ok((await pg.textContent("#pvCount")) === `Turn ${nStops} of ${nStops}` && (await pg.textContent("#pvNext")) === "Done", `[${scheme}] preview steps to the last turn`);
+    if (scheme === "light") await pg.screenshot({ path: path.join(shots, "6-preview.png") });
+    await pg.click("#pvNext");
+    ok(await pg.isHidden("#pv") && await pg.isVisible("#previewBtn"), `[${scheme}] Done closes the preview`);
     if (scheme === "light") {
       await pg.click("#pairs .pair");
       await pg.click(".seg button[data-r=fastest]");

@@ -40,6 +40,7 @@
     const E = data.edges, nE = E.length / 9;
     // directed edges: forward always, reverse when two-way
     const G = data.geom;
+    const LN = data.lanes || null; // lane count per edge (0 = unknown); older road files have none
     const dir = [];
     const pt = (n) => [lat[n], lon[n]];
     const gp = (k) => [G[2 * k] / 1e5, G[2 * k + 1] / 1e5];
@@ -64,7 +65,7 @@
       const time = E[o + 2] / 10 || flat(a, b) / vmax;
       // first and last legs of the edge's geometry, in the forward direction
       const first = gc ? gp(gs) : pt(b), last = gc ? gp(gs + gc - 1) : pt(a);
-      const common = { time, len, rank: E[o + 4], two_way: !!E[o + 5], name: E[o + 6], gs, gc };
+      const common = { time, len, rank: E[o + 4], two_way: !!E[o + 5], name: E[o + 6], gs, gc, lanes: LN ? LN[i] || 0 : 0 };
       dir.push(Object.assign({ a, b, rev: false, b0: bearing(pt(a), first), b1: bearing(last, pt(b)) }, common));
       if (common.two_way) dir.push(Object.assign({ a: b, b: a, rev: true, b0: bearing(pt(b), last), b1: bearing(first, pt(a)) }, common));
     }
@@ -263,12 +264,52 @@
       t.fromRank = eIn.rank;
       t.maneuver = t.kind !== "straight" || eIn.name !== eOut.name;
       t.risky = !!t.risk && (t.risk === "left" || p.right_busy > 0);
+      t.hdg = eIn.b1; // compass heading as you drive into the turn
+      t.hdgOut = eOut.b0;
+      if (t.risk) Object.assign(t, crossing(g, eIn, eOut, t));
       turns.push(t);
     }
     const nodes = [g.dir[edges[0]].a, ...edges.map((k) => g.dir[k].b)];
     const line = [];
     edges.forEach((k, i) => { const pts = edgePoints(g, g.dir[k]); line.push(...(i ? pts.slice(1) : pts)); });
     return { edges, nodes, time, len, turns, risky: turns.filter((t) => t.risky), line };
+  }
+
+  // What a risky turn makes you cross: which road, how many lanes of it (0 = unknown),
+  // and whether those are only the oncoming lanes or the whole two-way road.
+  function crossing(g, eIn, eOut, t) {
+    if (t.risk === "right") return { crossName: g.names[eOut.name], crossLanes: eOut.lanes, crossWhat: "merge", crossTwoWay: eOut.two_way };
+    if (eIn.rank >= 2) {
+      // turning off a busy road: you wait for a gap in its oncoming lanes
+      const n = eIn.lanes;
+      return { crossName: g.names[eIn.name], crossLanes: eIn.two_way && n ? Math.max(1, Math.ceil(n / 2)) : 0, crossWhat: "oncoming", crossTwoWay: eIn.two_way };
+    }
+    // turning from a side road onto or across a busier one: you cross its traffic both ways
+    let best = eOut.rank >= t.busyRank ? eOut : null;
+    if (!best) for (const k of g.out[t.node]) { const e = g.dir[k]; if (e.name !== eIn.name && e.rank >= t.busyRank && (!best || e.lanes > best.lanes)) best = e; }
+    best = best || eOut;
+    return { crossName: g.names[best.name], crossLanes: best.lanes, crossWhat: best.two_way ? "both" : "oneway", crossTwoWay: best.two_way };
+  }
+
+  // A few plain words for a risky turn: "No signal, crossing 4 lanes of two-way traffic".
+  // tag is the shorter form for a label on the map.
+  function shortReason(t) {
+    if (!t || !t.risk) return { reason: "", tag: "" };
+    const n = t.crossLanes || 0, L = (k) => `${k} ${k === 1 ? "lane" : "lanes"}`;
+    if (t.risk === "right") {
+      return n
+        ? { reason: `No signal, merging into ${L(n)} of fast traffic`, tag: `No signal · merge into ${L(n)}` }
+        : { reason: "No signal, merging into fast traffic", tag: "No signal · fast merge" };
+    }
+    if (t.crossWhat === "oncoming") {
+      return n
+        ? { reason: `No signal, crossing ${L(n)} of oncoming traffic`, tag: `No signal · ${L(n)} oncoming` }
+        : { reason: "No signal, crossing oncoming traffic", tag: "No signal · oncoming traffic" };
+    }
+    const two = t.crossWhat !== "oneway";
+    return n
+      ? { reason: `No signal, crossing ${L(n)} of ${two ? "two-way" : "one-way"} traffic`, tag: `No signal · ${L(n)}${two ? ", two-way" : ""}` }
+      : { reason: `No signal, crossing ${two ? "two-way" : "busy"} traffic`, tag: two ? "No signal · two-way traffic" : "No signal · busy road" };
   }
 
   function turnText(t) {
@@ -378,7 +419,9 @@
       steps: R.turns.filter((t) => t.maneuver).map(slim),
     });
     function slim(t) {
-      return { i: t.i, kind: t.kind, from: t.from, to: t.to, at: t.at, signal: t.signal, junction: t.junction, risk: t.risky ? t.risk : null, text: turnText(t), detail: t.risky ? riskDetail(t) : "" };
+      const why = t.risky ? shortReason(t) : { reason: "", tag: "" };
+      return { i: t.i, kind: t.kind, from: t.from, to: t.to, at: t.at, signal: t.signal, junction: t.junction, risk: t.risky ? t.risk : null, text: turnText(t), detail: t.risky ? riskDetail(t) : "",
+        hdg: Math.round(t.hdg), hdgOut: Math.round(t.hdgOut), lanes: t.risky ? t.crossLanes || 0 : 0, reason: why.reason, tag: why.tag };
     }
     return {
       decision: useSafe ? "safer" : F.risky.length === 0 ? "already_safe" : tooFar ? "too_far" : "no_better",
@@ -395,7 +438,7 @@
     };
   }
 
-  const api = { DEFAULTS, loadGraph, plan, nearest, nearestScan, haversine, bearing, turnKind, turnInfo, turnPen, search, segments, pinPoint, gmapsUrl, Heap };
+  const api = { DEFAULTS, loadGraph, plan, nearest, nearestScan, haversine, bearing, turnKind, turnInfo, turnPen, search, segments, pinPoint, gmapsUrl, Heap, shortReason };
   root.SaferRouter = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof self !== "undefined" ? self : globalThis);

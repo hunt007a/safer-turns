@@ -18,6 +18,9 @@ Free version: everything runs in the browser. There is no server, no account and
    the PC or on a published (https) site, so type the start address on the phone.
 
 To refresh the map data, delete `web/roads/toronto.json` and run `run.bat` again.
+Road files built before the 3D map have no lane counts: the app still works, but risky turns
+then say "crossing two-way traffic" instead of "crossing 4 lanes of two-way traffic".
+Rebuilding reuses the downloaded tiles in `osm_tiles/`, so it takes about a minute.
 To merge the City of Toronto signal list: `python build_roads.py --signals-csv signals.csv`.
 
 ## Address search
@@ -25,21 +28,38 @@ To merge the City of Toronto signal list: `python build_roads.py --signals-csv s
 By default it uses Photon, komoot's free public server (light use only). To use Geoapify,
 paste your key into `web/config.js`. You can also type coordinates as `43.6629,-79.3957`.
 
+## The map
+
+The map is MapLibre GL with free OpenFreeMap tiles (no key, no account). It picks one of three modes:
+
+- **3D**: tilted, with 3D buildings, and the turn preview flies the camera through each turn.
+- **2D**: flat and north-up, no buildings, quick moves. Phones with 2 or fewer CPU cores or
+  2 GB or less memory, or with data saver on, start here. The 2D/3D button on the map switches,
+  and the choice is remembered on that phone.
+- **Leaflet**: phones with no WebGL get the old flat tile map.
+
+With "reduce motion" turned on in the system settings, the preview glides between turns instead of flying.
+
+Each skipped risky turn is painted red on the map with a short reason, such as
+"No signal · 4 lanes, two-way". "Preview each turn" under the map steps through every turn of the
+route shown; on the safer route each skipped turn appears just before the turn that replaces it.
+
 ## What's in here
 
 | Path | What it is |
 | --- | --- |
 | `build_roads.py` | Downloads Toronto from OpenStreetMap and writes the compact road file |
 | `safer_route.py` | The original prototype; the builder reuses its road and signal logic |
-| `web/` | The app: `index.html`, `app.js` (wires up the page), `ui.js` (what the screens say), `router.js` (routing), `worker.js` (loads the road file) |
-| `web/vendor/leaflet/` | Map library (BSD-2 licence) |
+| `web/` | The app: `index.html`, `app.js` (wires up the page), `ui.js` (what the screens say), `router.js` (routing), `worker.js` (loads the road file), `map.js` (map drawing), `preview.js` (turn preview, map mode) |
+| `web/vendor/maplibre/` | 3D map library, MapLibre GL 4.7.1 (BSD-3 licence) |
+| `web/vendor/leaflet/` | Flat map for phones with no WebGL (BSD-2 licence) |
 | `tests/` | Sample street grid, router test against the prototype, headless browser test |
 | `.github/workflows/pages.yml` | For later: weekly data rebuild and free GitHub Pages hosting |
 
 ## Tests
 
 ```
-node --test "tests/*.test.js"                           # router, screen logic and worker unit tests
+node --test "tests/*.test.js"                           # router, screen logic, worker, turn reasons, preview and map unit tests
 node --test --experimental-test-coverage "tests/*.test.js"  # the same, with a coverage table
 python -m unittest discover -s tests -p "test_*.py"     # builder and prototype unit tests
 python tests/py_coverage.py                             # the same, with a coverage table

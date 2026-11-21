@@ -118,8 +118,39 @@ def download(bbox, splits=6):
     return {"elements": out}
 
 
-def compact(g):
-    """Collapse chains of plain road points into single edges with geometry."""
+def parse_lanes(v):
+    """OSM lanes tag ("4", "2;3", "2.5") to a whole number of lanes; 0 when missing or odd."""
+    best = 0
+    for part in str(v or "").replace(",", ";").split(";"):
+        try:
+            best = max(best, int(float(part.strip())))
+        except ValueError:
+            pass
+    return best if 0 < best <= 12 else 0
+
+
+def segment_lanes(osm):
+    """Map each pair of neighbouring OSM nodes on a road to that road's lane count."""
+    out = {}
+    for el in osm.get("elements", ()):
+        if el.get("type") != "way":
+            continue
+        n = parse_lanes(el.get("tags", {}).get("lanes"))
+        if not n:
+            continue
+        ns = el.get("nodes", [])
+        for a, b in zip(ns, ns[1:]):
+            out[(a, b)] = out[(b, a)] = max(n, out.get((a, b), 0))
+    return out
+
+
+def compact(g, seg_lanes=None):
+    """Collapse chains of plain road points into single edges with geometry.
+
+    seg_lanes (from segment_lanes) adds a "lanes" list: one lane count per edge, 0 = unknown.
+    """
+    seg_lanes = seg_lanes or {}
+    lanes = []
     names, name_ix = [], {}
 
     def nid(name):
@@ -161,6 +192,7 @@ def compact(g):
             done.add((k, nxt))
             prev, cur = k, nxt
             pts, t, L = [], e["time"], e["len"]
+            ln = seg_lanes.get((k, nxt), 0)
             guard = 0
             while cur not in keep_set and guard < 100000:
                 guard += 1
@@ -171,6 +203,7 @@ def compact(g):
                 x, ee = cand[0]
                 t += ee["time"]
                 L += ee["len"]
+                ln = max(ln, seg_lanes.get((cur, x), 0))
                 prev, cur = cur, x
             if cur not in keep_set:
                 continue  # dead end loop with no junction; drop
@@ -181,6 +214,7 @@ def compact(g):
                 geom += [round(la * 1e5), round(lo * 1e5)]
             edges += [ix[k], ix[cur], round(t * 10), round(L), e["rank"], 1 if e["two_way"] else 0,
                       nid(e["name"]), gstart, len(pts)]
+            lanes.append(ln)
 
     nodes, flags, roads = [], [], []
     for n in keep:
@@ -190,7 +224,10 @@ def compact(g):
         flags.append(f)
         rs = sorted({(r[0], 1 if r[1] else 0, nid(r[2])) for r in g.node_roads.get(n, ())}) if f & 2 else []
         roads.append([list(r) for r in rs])
-    return dict(names=names, nodes=nodes, flags=flags, roads=roads, edges=edges, geom=geom)
+    out = dict(names=names, nodes=nodes, flags=flags, roads=roads, edges=edges, geom=geom)
+    if any(lanes):
+        out["lanes"] = lanes
+    return out
 
 
 def main():
@@ -216,7 +253,7 @@ def main():
     extra = sr.load_signals_csv(args.signals_csv) if args.signals_csv else []
     print("Building road graph ...", file=sys.stderr)
     g = sr.Graph(osm, extra, sr.DEFAULTS["signal_radius_m"])
-    data = compact(g)
+    data = compact(g, segment_lanes(osm))
     lats = data["nodes"][0::2]
     lons = data["nodes"][1::2]
     data.update(v=1, area=args.area_name,

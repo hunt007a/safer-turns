@@ -13,7 +13,7 @@
   const S = { from: null, to: null, ready: false, result: null, view: "safer", opts: { avoid_rights: store.get("rights", false), max_detour_min: store.get("limit", 7) } };
 
   /* ---------- worker ---------- */
-  const worker = new Worker("worker.js?v=3&roads=" + encodeURIComponent(CFG.roadsUrl || "roads/toronto.json"));
+  const worker = new Worker("worker.js?v=4&roads=" + encodeURIComponent(CFG.roadsUrl || "roads/toronto.json"));
   let reqId = 0;
   worker.onmessage = (ev) => {
     const m = ev.data;
@@ -125,7 +125,7 @@
   drawRecent();
 
   /* ---------- screens ---------- */
-  function show(id) { $("plan").hidden = id !== "plan"; $("results").hidden = id !== "results"; window.scrollTo(0, 0); if (id === "results") setTimeout(() => map && map.invalidateSize(), 50); }
+  function show(id) { $("plan").hidden = id !== "plan"; $("results").hidden = id !== "results"; window.scrollTo(0, 0); if (id === "results") setTimeout(() => map && map.resize(), 50); else endPreview(); }
   $("backBtn").addEventListener("click", () => show("plan"));
   document.addEventListener("click", (e) => {
     const o = e.target.closest("[data-open]");
@@ -151,8 +151,8 @@
       for (const id of ["pairs", "still", "steps"]) $(id).innerHTML = "";
       $("stepsSum").textContent = ""; $("listH").textContent = "";
       $("lgStill").hidden = true; $("lgSig").parentElement.hidden = true;
-      if (layers) layers.clearLayers();
-      markers = [];
+      endPreview(); $("previewBtn").hidden = true;
+      if (map) map.clear();
       return;
     }
     S.view = r.chosen;
@@ -167,6 +167,8 @@
     $("listH").textContent = t.heading; $("pairs").innerHTML = t.html; $("still").innerHTML = t.stillHtml;
     $("lgStill").hidden = !t.legend.still; $("lgRisk").textContent = t.legend.riskLabel; $("lgSig").parentElement.hidden = !t.legend.signal;
     $("stepsSum").textContent = t.stepsSummary; $("steps").innerHTML = t.stepsHtml;
+    endPreview();
+    $("previewBtn").hidden = !(S.view === "safer" ? r.safer : r.fastest).steps.length;
     drawMap();
   }
 
@@ -175,36 +177,82 @@
     document.querySelectorAll("#pairs .pair").forEach((x) => x.classList.toggle("on", x === b));
     const pts = U.focusPoints(S.result, S.view, b.dataset);
     if (pts.length && map) {
-      map.fitBounds(L.latLngBounds(pts).pad(0.6), { maxZoom: 17 });
-      markers.forEach((m) => { if (pts.some((p) => p[0] === m.at[0] && p[1] === m.at[1])) { const el = m.mk.getElement(); if (el) { const d = el.firstChild; d.classList.remove("pulse"); void d.offsetWidth; d.classList.add("pulse"); } } });
-      $("map").scrollIntoView({ behavior: "smooth", block: "center" });
+      endPreview();
+      map.focus(pts);
+      $("mapwrap").scrollIntoView({ behavior: "smooth", block: "center" });
     }
   });
 
   /* ---------- map ---------- */
-  let map = null, layers = null, markers = [];
-  function icon(cls, txt) { return L.divIcon({ className: "", html: `<div class="mk ${cls}">${txt || ""}</div>`, iconSize: [18, 18], iconAnchor: [9, 9] }); }
-  function drawMap() {
-    if (typeof L === "undefined") return;
-    if (!map) {
-      map = L.map("map", { zoomControl: false, attributionControl: true });
-      L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "© OpenStreetMap contributors" }).addTo(map);
-      layers = L.layerGroup().addTo(map);
-    }
-    layers.clearLayers(); markers = [];
-    const r = S.result, safeView = S.view === "safer";
-    const css = getComputedStyle(document.documentElement);
-    const col = (v) => css.getPropertyValue(v).trim();
-    L.polyline(r.fastest.line, { color: safeView ? col("--fast") : col("--risk"), weight: 5, opacity: safeView ? 0.6 : 0.95, dashArray: safeView ? "8 6" : null }).addTo(layers);
-    if (r.decision === "safer" || safeView) L.polyline(r.safer.line, { color: col("--safe"), weight: 6, opacity: safeView ? 1 : 0.3 }).addTo(layers);
-    const add = (at, cls, txt) => { const mk = L.marker(at, { icon: icon(cls, txt), keyboard: false }).addTo(layers); markers.push({ at, mk }); };
-    if (safeView && r.decision === "safer") {
-      r.pairs.forEach((p) => { p.avoided.forEach((t) => add(t.at, "risk", "!")); p.instead.filter((t) => t.signal && t.kind !== "straight").forEach((t) => add(t.at, "safe", "")); });
-      r.still_risky.forEach((t) => add(t.at, "amber", "!"));
-    } else {
-      (safeView ? r.safer : r.fastest).risky.forEach((t) => add(t.at, "risk", "!"));
-    }
-    add(r.fastest.line[0], "start", ""); add(r.fastest.line[r.fastest.line.length - 1], "end", "");
-    map.fitBounds(L.latLngBounds([...r.fastest.line, ...r.safer.line]).pad(0.08), { animate: false });
+  const P = window.SaferPreview;
+  let mode = P.pickMode({
+    webgl: window.SaferMap.hasWebGL(),
+    saved: store.get("map", null),
+    reducedMotion: !!(window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches),
+    saveData: !!(navigator.connection && navigator.connection.saveData),
+    cores: navigator.hardwareConcurrency || 0,
+    memoryGb: navigator.deviceMemory || 0,
+  });
+  let map = null;
+  function drawMode() {
+    const b = $("modeBtn");
+    b.hidden = mode === "leaflet";
+    b.textContent = mode === "3d" ? "2D" : "3D";
+    b.setAttribute("aria-label", mode === "3d" ? "Switch to flat map" : "Switch to 3D map");
+    $("mapwrap").dataset.mode = mode;
   }
+  drawMode();
+  $("modeBtn").addEventListener("click", () => {
+    mode = mode === "3d" ? "2d" : "3d";
+    store.set("map", mode); drawMode();
+    if (map) { map.setMode(mode); if (PV.on) map.fly(PV.stops[PV.k]); }
+  });
+  function drawMap() {
+    if (!map) map = window.SaferMap.create($("map"), mode);
+    map.draw(S.result, S.view);
+  }
+
+  /* ---------- turn-by-turn preview ---------- */
+  const PV = { on: false, stops: [], k: 0 };
+  function previewAt(k) {
+    PV.k = Math.max(0, Math.min(PV.stops.length - 1, k));
+    const s = PV.stops[PV.k];
+    $("pvCount").textContent = `Turn ${PV.k + 1} of ${PV.stops.length}`;
+    $("pvKind").textContent = { skipped: "Skipped", risk: "Take care", signal: "Signal", turn: "Turn" }[s.kind];
+    $("pvKind").className = "pvkind " + s.kind;
+    $("pvText").textContent = s.kind === "skipped" ? "Fastest route would: " + s.text : s.text;
+    $("pvNote").textContent = s.note;
+    $("pvPrev").disabled = PV.k === 0;
+    $("pvNext").textContent = PV.k === PV.stops.length - 1 ? "Done" : "Next";
+    map.fly(s);
+  }
+  function startPreview() {
+    const r = S.result; if (!r || r.error || !map) return;
+    PV.stops = P.previewStops(r, S.view);
+    if (!PV.stops.length) return;
+    PV.on = true;
+    $("pv").hidden = false; $("previewBtn").hidden = true;
+    $("mapwrap").classList.add("previewing");
+    $("mapwrap").scrollIntoView({ behavior: "smooth", block: "start" });
+    previewAt(0);
+    $("pvNext").focus();
+  }
+  function endPreview() {
+    if (!PV.on) return;
+    PV.on = false;
+    $("pv").hidden = true; $("previewBtn").hidden = false;
+    $("mapwrap").classList.remove("previewing");
+    if (map) map.endPreview();
+  }
+  $("previewBtn").addEventListener("click", startPreview);
+  $("pvPrev").addEventListener("click", () => previewAt(PV.k - 1));
+  $("pvNext").addEventListener("click", () => (PV.k === PV.stops.length - 1 ? endPreview() : previewAt(PV.k + 1)));
+  $("pvClose").addEventListener("click", endPreview);
+  document.addEventListener("keydown", (e) => {
+    if (!PV.on) return;
+    if (e.key === "ArrowRight") { previewAt(PV.k + 1); e.preventDefault(); }
+    else if (e.key === "ArrowLeft") { previewAt(PV.k - 1); e.preventDefault(); }
+    else if (e.key === "Escape") endPreview();
+  });
+  window.SaferTurnsDebug = { get result() { return S.result; }, get view() { return S.view; }, get mode() { return mode; }, get map() { return map; }, get preview() { return PV; } };
 })();
