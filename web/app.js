@@ -12,7 +12,7 @@
   const S = { from: null, to: null, ready: false, result: null, view: "safer", opts: { avoid_rights: store.get("rights", false), max_detour_min: store.get("limit", 7) } };
 
   /* ---------- worker ---------- */
-  const worker = new Worker("worker.js?roads=" + encodeURIComponent(CFG.roadsUrl || "roads/toronto.json"));
+  const worker = new Worker("worker.js?v=2&roads=" + encodeURIComponent(CFG.roadsUrl || "roads/toronto.json"));
   let reqId = 0;
   worker.onmessage = (ev) => {
     const m = ev.data;
@@ -163,7 +163,13 @@
     if (r.error) {
       const msg = { outside: "That spot is off the road map.", same: "Start and destination are at the same spot.", noroute: "No driving route was found between those points.", crash: "Something went wrong working out the route." }[r.error] || "No route.";
       $("eyebrow").textContent = "No route"; $("big").textContent = msg; $("sub").textContent = r.message || "";
-      $("pairs").innerHTML = ""; $("still").innerHTML = ""; return;
+      $("pairs").innerHTML = ""; $("still").innerHTML = ""; $("steps").innerHTML = ""; $("stepsSum").textContent = "";
+      $("fallback").hidden = true; $("listH").textContent = "";
+      $("go").removeAttribute("href"); $("go").setAttribute("aria-disabled", "true");
+      $("fine").textContent = "Pick a different start or destination to get a route.";
+      $("barSafe").style.width = "0"; $("barFast").style.width = "0"; $("tSafe").textContent = ""; $("tFast").textContent = "";
+      if (layers) layers.clearLayers();
+      return;
     }
     S.view = r.chosen;
     const F = r.fastest, Sf = r.safer;
@@ -198,7 +204,7 @@
     const maxT = Math.max(F.minutes, Sf.minutes) || 1;
     $("barSafe").style.width = (100 * Sf.minutes / maxT) + "%"; $("barFast").style.width = (100 * F.minutes / maxT) + "%";
     $("tSafe").textContent = fmtMin(Sf.minutes); $("tFast").textContent = fmtMin(F.minutes);
-    $("go").href = r.google_url;
+    $("go").href = r.google_url; $("go").removeAttribute("aria-disabled");
     $("go").textContent = r.chosen === "safer" ? "Open in Google Maps" : "Open fastest route in Google Maps";
     $("fine").textContent = r.chosen === "safer" && r.pins.length
       ? `Google Maps will announce ${plural(r.pins.length, "stop", "stops")}. Those are pinned signals to drive through, not places to stop.`

@@ -30,7 +30,7 @@ let fails = 0; const ok = (c, m) => { console.log((c ? "ok   " : "FAIL ") + m); 
     await pg.goto(`http://localhost:${port}/index.html`);
     await pg.evaluate(() => {});
     // point the app at the sample road file
-    await pg.route(/roads\/toronto\.json/, (r) => r.fulfill({ path: path.join(root, "roads", "sample.json") }));
+    await pg.route(/roads\/toronto\.json/, (r) => r.fulfill({ path: path.join(__dirname, "sample_roads.json") }));
     await pg.reload();
     await pg.waitForFunction(() => !document.getElementById("goBtn").textContent.includes("Loading"), null, { timeout: 15000 });
     ok(true, `[${scheme}] road file loaded`);
@@ -64,6 +64,12 @@ let fails = 0; const ok = (c, m) => { console.log((c ? "ok   " : "FAIL ") + m); 
       await pg.waitForFunction(() => !document.getElementById("fallback").hidden, null, { timeout: 10000 });
       ok(!(await pg.getAttribute("#go", "href")).includes("waypoints"), "fallback opens fastest route with no stops");
       await pg.screenshot({ path: path.join(shots, "5-fallback.png"), fullPage: true });
+      // a trip that fails must not keep the previous trip's Google Maps link
+      await pg.click("#backBtn");
+      await pg.fill("#fromInput", "43.80,-79.20"); await pg.waitForSelector("#fromList li"); await pg.click("#fromList li");
+      await pg.click("#goBtn");
+      await pg.waitForFunction(() => document.getElementById("eyebrow").textContent === "No route", null, { timeout: 10000 });
+      ok(!(await pg.getAttribute("#go", "href")), "failed trip clears the Google Maps link");
     }
     ok(errs.length === 0, `[${scheme}] no page errors ${errs.join(" | ")}`);
     await ctx.close();

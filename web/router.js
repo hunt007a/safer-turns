@@ -13,6 +13,7 @@
     max_detour_min: 7,
     max_detour_pct: 30,
     max_waypoints: 3,
+    max_snap_m: 1000, // a start or end further than this from any road is off the map
   };
   const RIGHT_AVOID = 120;
   const ROAD_WORD = { 6: "a highway", 5: "an expressway", 4: "a major road", 3: "a major road", 2: "a busy road" };
@@ -37,23 +38,24 @@
     for (let i = 0; i < nN; i++) { lat[i] = data.nodes[2 * i] / 1e5; lon[i] = data.nodes[2 * i + 1] / 1e5; }
     const E = data.edges, nE = E.length / 9;
     // directed edges: forward always, reverse when two-way
+    const G = data.geom;
     const dir = [];
+    let vmax = 1; // fastest speed on any edge, m/s: bounds the A* estimate
+    const pt = (n) => [lat[n], lon[n]];
+    const gp = (k) => [G[2 * k] / 1e5, G[2 * k + 1] / 1e5];
     for (let i = 0; i < nE; i++) {
       const o = i * 9;
-      const base = { a: E[o], b: E[o + 1], time: E[o + 2] / 10, len: E[o + 3], rank: E[o + 4], two_way: !!E[o + 5], name: E[o + 6], gs: E[o + 7], gc: E[o + 8] };
-      dir.push({ ...base, rev: false });
-      if (base.two_way) dir.push({ ...base, a: base.b, b: base.a, rev: true });
+      const a = E[o], b = E[o + 1], time = E[o + 2] / 10, len = E[o + 3], gs = E[o + 7], gc = E[o + 8];
+      if (time > 0 && len / time > vmax) vmax = len / time;
+      // first and last legs of the edge's geometry, in the forward direction
+      const first = gc ? gp(gs) : pt(b), last = gc ? gp(gs + gc - 1) : pt(a);
+      const common = { time, len, rank: E[o + 4], two_way: !!E[o + 5], name: E[o + 6], gs, gc };
+      dir.push(Object.assign({ a, b, rev: false, b0: bearing(pt(a), first), b1: bearing(last, pt(b)) }, common));
+      if (common.two_way) dir.push(Object.assign({ a: b, b: a, rev: true, b0: bearing(pt(b), last), b1: bearing(first, pt(a)) }, common));
     }
     const out = Array.from({ length: nN }, () => []);
     dir.forEach((e, k) => out[e.a].push(k));
-    const g = { data, lat, lon, flags: data.flags, roads: data.roads, names: data.names, dir, out };
-    // bearings at both ends of every directed edge
-    for (const e of dir) {
-      const pts = edgePoints(g, e);
-      e.b0 = bearing(pts[0], pts[1]);
-      e.b1 = bearing(pts[pts.length - 2], pts[pts.length - 1]);
-    }
-    return g;
+    return { data, lat, lon, flags: data.flags, roads: data.roads, names: data.names, dir, out, vmax };
   }
 
   function edgePoints(g, e) {
@@ -107,33 +109,83 @@
     return res;
   }
 
-  /* ---------- edge-based Dijkstra ---------- */
-  class Heap {
-    constructor() { this.a = []; }
-    push(c, v) { const a = this.a; a.push([c, v]); let i = a.length - 1; while (i) { const j = (i - 1) >> 1; if (a[j][0] <= a[i][0]) break; [a[i], a[j]] = [a[j], a[i]]; i = j; } }
-    pop() { const a = this.a, top = a[0], last = a.pop(); if (a.length) { a[0] = last; let i = 0; for (;;) { const l = 2 * i + 1, r = l + 1; let m = i; if (l < a.length && a[l][0] < a[m][0]) m = l; if (r < a.length && a[r][0] < a[m][0]) m = r; if (m === i) break; [a[i], a[m]] = [a[m], a[i]]; i = m; } } return top; }
-    get size() { return this.a.length; }
+  // Same result as turnInfo(...).pen, without building objects or arrays. The search
+  // calls this for every pair of edges it looks at, so it has to stay cheap.
+  function turnPen(g, eIn, eOut, p) {
+    const n = eIn.b, f = g.flags[n];
+    if (f & 1 || !(f & 2)) return 0;
+    const kind = turnKind(eIn, eOut);
+    if (kind !== "left" && kind !== "right") return 0;
+    const roads = g.roads[n] || [];
+    let busyRank = eOut.rank, otherTwoWay = false, nOther = 0;
+    for (const r of roads) if (r[2] !== eIn.name) { nOther++; if (r[0] > busyRank) busyRank = r[0]; if (r[1]) otherTwoWay = true; }
+    if (!nOther) for (const r of roads) { if (r[0] > busyRank) busyRank = r[0]; if (r[1]) otherTwoWay = true; }
+    const busy = busyRank >= 2;
+    if (kind === "left") {
+      if (!(eIn.two_way || eOut.two_way || otherTwoWay)) return 0;
+      return busy || eIn.rank >= 2 ? p.left_busy : p.left_local;
+    }
+    return busy && eOut.rank >= 2 && eIn.rank < eOut.rank ? p.right_busy : 0;
   }
 
+  /* ---------- edge-based A* ---------- */
+  // Binary min-heap on typed arrays, so pushing allocates nothing. pop() returns the
+  // value and leaves its key in this.key.
+  class Heap {
+    constructor(cap = 1024) { this.k = new Float64Array(cap); this.v = new Int32Array(cap); this.size = 0; this.key = 0; }
+    push(c, v) {
+      if (this.size === this.k.length) {
+        const k = new Float64Array(this.size * 2), w = new Int32Array(this.size * 2);
+        k.set(this.k); w.set(this.v); this.k = k; this.v = w;
+      }
+      const K = this.k, V = this.v;
+      let i = this.size++;
+      while (i) { const j = (i - 1) >> 1; if (K[j] <= c) break; K[i] = K[j]; V[i] = V[j]; i = j; }
+      K[i] = c; V[i] = v;
+    }
+    pop() {
+      const K = this.k, V = this.v, top = V[0];
+      this.key = K[0];
+      const n = --this.size, c = K[n], v = V[n];
+      let i = 0;
+      for (;;) {
+        const l = 2 * i + 1;
+        if (l >= n) break;
+        const m = l + 1 < n && K[l + 1] < K[l] ? l + 1 : l;
+        if (K[m] >= c) break;
+        K[i] = K[m]; V[i] = V[m]; i = m;
+      }
+      if (n) { K[i] = c; V[i] = v; }
+      return top;
+    }
+  }
+
+  // A* over directed edges: the state is an edge, so a turn between two edges can
+  // carry a cost. The estimate is straight-line distance at the road file's top speed,
+  // cut by 2% so rounding in the file can never make it overestimate.
   function search(g, src, dst, p, safe) {
     const nD = g.dir.length;
     const best = new Float64Array(nD).fill(Infinity);
     const par = new Int32Array(nD).fill(-1);
     const h = new Heap();
-    for (const k of g.out[src]) { best[k] = g.dir[k].time; h.push(best[k], k); }
+    const dLat = g.lat[dst], dLon = g.lon[dst];
+    const kx = 111195 * Math.cos(toRad(dLat)), ky = 111195, inv = 0.98 / g.vmax;
+    const est = (n) => { const x = (g.lon[n] - dLon) * kx, y = (g.lat[n] - dLat) * ky; return Math.sqrt(x * x + y * y) * inv; };
+    for (const k of g.out[src]) { const e = g.dir[k]; if (e.time < best[k]) { best[k] = e.time; h.push(e.time + est(e.b), k); } }
     let goal = -1;
     while (h.size) {
-      const [c, k] = h.pop();
-      if (c > best[k]) continue;
-      const eIn = g.dir[k];
+      const k = h.pop();
+      const eIn = g.dir[k], c = best[k];
+      if (h.key > c + est(eIn.b) + 1e-6) continue; // stale entry: a cheaper way in was found
       if (eIn.b === dst) { goal = k; break; }
-      for (const k2 of g.out[eIn.b]) {
-        const eOut = g.dir[k2];
+      const outs = g.out[eIn.b];
+      for (let j = 0; j < outs.length; j++) {
+        const k2 = outs[j], eOut = g.dir[k2];
         let pen = 0;
-        if (eOut.b === eIn.a && g.out[eIn.b].length > 1) pen = p.uturn;
-        else if (safe) pen = turnInfo(g, eIn, eOut, p).pen;
+        if (eOut.b === eIn.a && outs.length > 1) pen = p.uturn;
+        else if (safe) pen = turnPen(g, eIn, eOut, p);
         const nc = c + eOut.time + pen;
-        if (nc < best[k2]) { best[k2] = nc; par[k2] = k; h.push(nc, k2); }
+        if (nc < best[k2]) { best[k2] = nc; par[k2] = k; h.push(nc + est(eOut.b), k2); }
       }
     }
     if (goal < 0) return null;
@@ -227,6 +279,7 @@
     if (opts && opts.avoid_rights) p.right_busy = RIGHT_AVOID;
     const s = nearest(g, src), d = nearest(g, dst);
     if (s < 0 || d < 0) return { error: "outside" };
+    if (haversine(src, [g.lat[s], g.lon[s]]) > p.max_snap_m || haversine(dst, [g.lat[d], g.lon[d]]) > p.max_snap_m) return { error: "outside" };
     if (s === d) return { error: "same" };
     const fe = search(g, s, d, p, false);
     if (!fe) return { error: "noroute" };
@@ -275,7 +328,7 @@
       return { i: t.i, kind: t.kind, from: t.from, to: t.to, at: t.at, signal: t.signal, junction: t.junction, risk: t.risky ? t.risk : null, text: turnText(t), detail: t.risky ? riskDetail(t) : "" };
     }
     return {
-      decision: useSafe ? "safer" : tooFar ? "too_far" : F.risky.length === 0 ? "already_safe" : "no_better",
+      decision: useSafe ? "safer" : F.risky.length === 0 ? "already_safe" : tooFar ? "too_far" : "no_better",
       extra_min: extra / 60,
       fastest: out(F),
       safer: out(S),
@@ -289,7 +342,7 @@
     };
   }
 
-  const api = { DEFAULTS, loadGraph, plan, nearest, haversine, bearing };
+  const api = { DEFAULTS, loadGraph, plan, nearest, haversine, bearing, turnKind, turnInfo, turnPen, search, segments, gmapsUrl, Heap };
   root.SaferRouter = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof self !== "undefined" ? self : globalThis);
