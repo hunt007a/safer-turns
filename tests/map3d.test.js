@@ -212,3 +212,12 @@ test("overlays: markers sit on real points, risky ones carry their label, and sk
   assert.equal(M.overlays(r, "safer").safeView, true);
   assert.equal(M.overlays(r, "fastest").safeView, false);
 });
+
+test("overlays: the fastest route is drawn red only when it has risky turns", () => {
+  const line = [[43.7, -79.4], [43.701, -79.4]];
+  const base = { decision: "already_safe", pairs: [], still_risky: [], safer: { line, risky: [], steps: [] } };
+  const safe = M.overlays({ ...base, fastest: { line, risky: [], steps: [] } }, "fastest");
+  assert.equal(safe.fastRisky, false);
+  const risky = M.overlays({ ...base, decision: "too_far", fastest: { line, risky: [{ at: line[1], tag: "No signal · oncoming traffic" }], steps: [] } }, "fastest");
+  assert.equal(risky.fastRisky, true);
+});
