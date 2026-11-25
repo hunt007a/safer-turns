@@ -9,6 +9,7 @@
   const STYLE_LIGHT = CFG.mapStyle || "https://tiles.openfreemap.org/styles/positron";
   const STYLE_DARK = CFG.mapStyleDark || "https://tiles.openfreemap.org/styles/dark";
   const TORONTO = [-79.38, 43.70];
+  const LABEL_ZOOM = 14; // below this the map shows red "!" dots without their reason labels
   const darkQ = root.matchMedia ? root.matchMedia("(prefers-color-scheme: dark)") : null;
   const motionQ = root.matchMedia ? root.matchMedia("(prefers-reduced-motion: reduce)") : null;
   const isDark = () => !!(darkQ && darkQ.matches);
@@ -41,6 +42,7 @@
     add(r.fastest.line[0], "start", ""); add(r.fastest.line[r.fastest.line.length - 1], "end", "");
     return {
       safeView,
+      fastRisky: r.fastest.risky.length > 0, // a fastest route with no risky turns is drawn green, not red
       showSafe: r.decision === "safer" || safeView,
       fast: r.fastest.line, safe: r.safer.line,
       red: redTurns.map(([line, at]) => P.aroundTurn(line, at, 45)).filter((x) => x.length > 1),
@@ -68,6 +70,9 @@
     map.on("error", (e) => console.warn("map:", e && e.error ? e.error.message : e));
     map.addControl(new gl.NavigationControl({ showCompass: true, showZoom: false, visualizePitch: true }), "top-right");
     map.on("style.load", () => { styleReady = true; addLayers(); paint(); });
+    // labels on red turns only when zoomed in enough that they don't pile on top of each other
+    const labels = () => el.classList.toggle("farzoom", map.getZoom() < LABEL_ZOOM);
+    map.on("zoom", labels); labels();
     if (darkQ && darkQ.addEventListener) darkQ.addEventListener("change", () => { styleReady = false; map.setStyle(isDark() ? STYLE_DARK : STYLE_LIGHT); });
 
     const empty = { type: "FeatureCollection", features: [] };
@@ -102,7 +107,7 @@
       map.getSource("st-fast").setData(lineFC([o.fast]));
       map.getSource("st-safe").setData(lineFC(o.showSafe ? [o.safe] : []));
       map.getSource("st-red").setData(lineFC(o.red));
-      map.setPaintProperty("st-fast", "line-color", o.safeView ? col("--fast") : col("--risk"));
+      map.setPaintProperty("st-fast", "line-color", o.safeView ? col("--fast") : o.fastRisky ? col("--risk") : col("--safe"));
       map.setPaintProperty("st-fast", "line-opacity", o.safeView ? 0.85 : 0.95);
       map.setPaintProperty("st-fast", "line-dasharray", o.safeView ? [1.6, 1.2] : [1, 0]);
       map.setPaintProperty("st-safe", "line-color", col("--safe"));
@@ -186,6 +191,8 @@
     const ready = loadLeaflet().then(() => {
       const L = root.L;
       map = L.map(el, { zoomControl: false, attributionControl: true });
+      const labels = () => el.classList.toggle("farzoom", map.getZoom() < LABEL_ZOOM);
+      map.on("zoomend", labels);
       L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "© OpenStreetMap contributors" }).addTo(map);
       layers = L.layerGroup().addTo(map);
       if (pending) pending();
@@ -197,7 +204,7 @@
         whenReady(() => {
           const L = root.L, o = overlays(r, view);
           layers.clearLayers(); markers = [];
-          L.polyline(o.fast, { color: o.safeView ? col("--fast") : col("--risk"), weight: 5, opacity: o.safeView ? 0.6 : 0.95, dashArray: o.safeView ? "8 6" : null }).addTo(layers);
+          L.polyline(o.fast, { color: o.safeView ? col("--fast") : o.fastRisky ? col("--risk") : col("--safe"), weight: 5, opacity: o.safeView ? 0.6 : 0.95, dashArray: o.safeView ? "8 6" : null }).addTo(layers);
           if (o.showSafe) L.polyline(o.safe, { color: col("--safe"), weight: 6, opacity: o.safeView ? 1 : 0.3 }).addTo(layers);
           o.red.forEach((seg) => L.polyline(seg, { color: col("--risk"), weight: 9, opacity: 0.95 }).addTo(layers));
           o.marks.forEach((m) => {

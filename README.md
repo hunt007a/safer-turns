@@ -6,6 +6,18 @@ route skips and what that costs in time, then open the trip in Google Maps.
 
 Free version: everything runs in the browser. There is no server, no account and no API key.
 
+## Screenshots
+
+Taken on a phone-sized screen (375 px wide) with real Toronto data, mostly on a trip from Casa Loma to Withrow Park.
+
+<table>
+<tr><td align="center" width="33%"><img src="screenshots/01-plan.jpg" width="220" alt="Plan a trip"><br><sub>Plan a trip</sub></td><td align="center" width="33%"><img src="screenshots/02-results-light.jpg" width="220" alt="Safer route found"><br><sub>Safer route found</sub></td><td align="center" width="33%"><img src="screenshots/03-skipped-turns.jpg" width="220" alt="Turns the route skips, with reasons"><br><sub>Turns the route skips, with reasons</sub></td></tr>
+<tr><td align="center" width="33%"><img src="screenshots/04-map-3d.jpg" width="220" alt="3D map: a skipped turn in red"><br><sub>3D map: a skipped turn in red</sub></td><td align="center" width="33%"><img src="screenshots/05-preview-skipped.jpg" width="220" alt="Turn preview: a skipped turn"><br><sub>Turn preview: a skipped turn</sub></td><td align="center" width="33%"><img src="screenshots/06-preview-signal.jpg" width="220" alt="Turn preview: turning at a signal"><br><sub>Turn preview: turning at a signal</sub></td></tr>
+<tr><td align="center" width="33%"><img src="screenshots/07-fastest-route.jpg" width="220" alt="Fastest route and its risky turns"><br><sub>Fastest route and its risky turns</sub></td><td align="center" width="33%"><img src="screenshots/08-how-it-works.jpg" width="220" alt="How it works"><br><sub>How it works</sub></td><td align="center" width="33%"><img src="screenshots/09-map-2d.jpg" width="220" alt="Flat 2D map"><br><sub>Flat 2D map</sub></td></tr>
+<tr><td align="center" width="33%"><img src="screenshots/10-fallback.jpg" width="220" alt="Safer route too long: fastest route"><br><sub>Safer route too long: fastest route</sub></td><td align="center" width="33%"><img src="screenshots/11-already-safe.jpg" width="220" alt="Fastest route is already safe"><br><sub>Fastest route is already safe</sub></td><td align="center" width="33%"><img src="screenshots/12-no-route.jpg" width="220" alt="No route"><br><sub>No route</sub></td></tr>
+<tr><td align="center" width="33%"><img src="screenshots/13-results-dark.jpg" width="220" alt="Dark mode"><br><sub>Dark mode</sub></td><td align="center" width="33%"><img src="screenshots/14-preview-dark.jpg" width="220" alt="Turn preview in dark mode"><br><sub>Turn preview in dark mode</sub></td></tr>
+</table>
+
 ## Run it on your PC (Windows)
 
 1. Install Python 3 from python.org if you don't have it (tick "Add python.exe to PATH").
