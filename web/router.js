@@ -72,9 +72,61 @@
     const out = Array.from({ length: nN }, () => []);
     dir.forEach((e, k) => out[e.a].push(k));
     const g = { data, lat, lon, flags: data.flags, roads: data.roads, names: data.names, dir, out, vmax };
+    g.main = mainComponent(g);
     g.grid = buildGrid(g);
     return g;
   }
+
+  /* ---------- the connected road network ----------
+   * OSM has small islands of road that the rest cannot reach by car: a zoo's or
+   * hospital's inside roads joined to the street only by a private driveway, a
+   * parking lot behind a gate. Snapping a start or end onto one gives "no route",
+   * so nearest() only snaps to the largest strongly connected part of the network
+   * (every junction in it can reach every other). Tiny hand-made test graphs are
+   * left alone. Returns a Uint8Array (1 = in the main network), or null.
+   */
+  const MAIN_MIN_NODES = 1000;
+  function mainComponent(g, minNodes = MAIN_MIN_NODES) {
+    const n = g.flags.length;
+    if (n < minNodes) return null;
+    // Kosaraju, iterative: finish order on the graph, then components on the reversed graph
+    const order = new Int32Array(n);
+    let nOrder = 0;
+    const seen = new Uint8Array(n), stackN = new Int32Array(n), stackI = new Int32Array(n);
+    for (let s0 = 0; s0 < n; s0++) {
+      if (seen[s0]) continue;
+      let top = 0; stackN[0] = s0; stackI[0] = 0; seen[s0] = 1;
+      while (top >= 0) {
+        const v = stackN[top], outs = g.out[v];
+        if (stackI[top] < outs.length) {
+          const w = g.dir[outs[stackI[top]++]].b;
+          if (!seen[w]) { seen[w] = 1; top++; stackN[top] = w; stackI[top] = 0; }
+        } else { order[nOrder++] = v; top--; }
+      }
+    }
+    const rStart = new Int32Array(n + 1);
+    for (const e of g.dir) rStart[e.b + 1]++;
+    for (let i = 0; i < n; i++) rStart[i + 1] += rStart[i];
+    const rAdj = new Int32Array(g.dir.length), fill = rStart.slice(0, n);
+    for (const e of g.dir) rAdj[fill[e.b]++] = e.a;
+    const comp = new Int32Array(n).fill(-1);
+    let nComp = 0, bestComp = -1, bestSize = 0;
+    for (let k = n - 1; k >= 0; k--) {
+      const s0 = order[k];
+      if (comp[s0] >= 0) continue;
+      let size = 0, top = 0; stackN[0] = s0; comp[s0] = nComp;
+      while (top >= 0) {
+        const v = stackN[top--]; size++;
+        for (let j = rStart[v]; j < rStart[v + 1]; j++) { const w = rAdj[j]; if (comp[w] < 0) { comp[w] = nComp; stackN[++top] = w; } }
+      }
+      if (size > bestSize) { bestSize = size; bestComp = nComp; }
+      nComp++;
+    }
+    const main = new Uint8Array(n);
+    for (let i = 0; i < n; i++) main[i] = comp[i] === bestComp ? 1 : 0;
+    return main;
+  }
+  const snappable = (g, i) => g.out[i].length > 0 && (!g.main || g.main[i] === 1);
 
   /* ---------- nearest junction: a grid so start and end snap without scanning every node ---------- */
   // nearest() measures distance as dLat^2 + (dLon * LON_SCALE)^2, so cells are square in that measure.
@@ -83,7 +135,7 @@
   function buildGrid(g) {
     const cells = new Map();
     for (let i = 0; i < g.flags.length; i++) {
-      if (!g.out[i].length) continue;
+      if (!snappable(g, i)) continue;
       const [r, c] = cellOf(g.lat[i], g.lon[i]), key = r * 100003 + c;
       let list = cells.get(key);
       if (!list) cells.set(key, (list = []));
@@ -104,7 +156,7 @@
   function nearestScan(g, pt) {
     let best = -1, bd = Infinity;
     for (let i = 0; i < g.flags.length; i++) {
-      if (!g.out[i].length) continue;
+      if (!snappable(g, i)) continue;
       const d = sqDist(g, i, pt);
       if (d < bd || (d === bd && i < best)) { bd = d; best = i; }
     }
@@ -438,7 +490,7 @@
     };
   }
 
-  const api = { DEFAULTS, loadGraph, plan, nearest, nearestScan, haversine, bearing, turnKind, turnInfo, turnPen, search, segments, pinPoint, gmapsUrl, Heap, shortReason };
+  const api = { DEFAULTS, MAIN_MIN_NODES, loadGraph, mainComponent, plan, nearest, nearestScan, haversine, bearing, turnKind, turnInfo, turnPen, search, segments, pinPoint, gmapsUrl, Heap, shortReason };
   root.SaferRouter = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof self !== "undefined" ? self : globalThis);

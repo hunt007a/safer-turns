@@ -13,7 +13,7 @@
   const S = { from: null, to: null, ready: false, result: null, view: "safer", opts: { avoid_rights: store.get("rights", false), max_detour_min: store.get("limit", 7) } };
 
   /* ---------- worker ---------- */
-  const worker = new Worker("worker.js?v=4&roads=" + encodeURIComponent(CFG.roadsUrl || "roads/toronto.json"));
+  const worker = new Worker("worker.js?v=5&roads=" + encodeURIComponent(CFG.roadsUrl || "roads/toronto.json"));
   let reqId = 0;
   worker.onmessage = (ev) => {
     const m = ev.data;
