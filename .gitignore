@@ -4,3 +4,7 @@ __pycache__/
 osm_tiles/
 web/roads/toronto.json.gz
 tests/sample_roads.json.gz
+build.log
+*.log
+.env
+.env.*
